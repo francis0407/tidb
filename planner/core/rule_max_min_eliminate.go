@@ -26,6 +26,7 @@ import (
 // maxMinEliminator tries to eliminate max/min aggregate function.
 // For SQL like `select max(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id desc limit 1 where id is not null) t;`.
 // For SQL like `select min(id) from t;`, we could optimize it to `select max(id) from (select id from t order by id limit 1 where id is not null) t;`.
+// For SQL like `select max(id), min(id) from t;`, we could optimize it to the cartesianJoin result of the two queries above if `id` has an index.
 type maxMinEliminator struct {
 }
 
@@ -90,7 +91,7 @@ func (a *maxMinEliminator) cloneSubPlans(plan LogicalPlan) LogicalPlan {
 		sel.SetChildren(a.cloneSubPlans(p.children[0]))
 		return sel
 	case *DataSource:
-		// Quick clone a DataSource.
+		// This is a shallow clone which may not be safe.
 		newDs := *p
 		newDs.self = &newDs
 		return &newDs
@@ -126,6 +127,7 @@ func (a *maxMinEliminator) splitAggFuncAndCheckIndices(agg *LogicalAggregation) 
 	return aggs, true
 }
 
+// Try to convert a single max/min to Limit+Sort operators.
 func (a *maxMinEliminator) eliminateSingleMaxMin(agg *LogicalAggregation) *LogicalAggregation {
 	f := agg.AggFuncs[0]
 	child := agg.Children()[0]
@@ -186,7 +188,7 @@ func (a *maxMinEliminator) eliminateMaxMin(p LogicalPlan) LogicalPlan {
 		if !canEliminate {
 			return agg
 		}
-		for i, _ := range aggs {
+		for i := range aggs {
 			aggs[i] = a.eliminateSingleMaxMin(aggs[i])
 		}
 		return a.composeAggsByInnerJoin(aggs)
