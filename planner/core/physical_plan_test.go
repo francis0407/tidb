@@ -1266,6 +1266,7 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 			sql:  "select max(a), min(a) from t;",
 			best: "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}",
 		},
+		// Min + Max with range condition.
 		{
 			sql:  "select max(a), min(a) from t where a > 10",
 			best: "LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->TableReader(Table(t)->Limit)->Limit->StreamAgg}",
@@ -1274,13 +1275,20 @@ func (s *testPlanSuite) TestAggEliminater(c *C) {
 			sql:  "select max(a), max(c), min(f) from t",
 			best: "LeftHashJoin{LeftHashJoin{TableReader(Table(t)->Limit)->Limit->StreamAgg->IndexLookUp(Index(t.c_d_e)[[NULL,+inf]]->Limit, Table(t))->Limit->StreamAgg}->IndexLookUp(Index(t.f)[[NULL,+inf]]->Limit, Table(t))->Limit->StreamAgg}",
 		},
+		// Do nothing if any column has no index.
 		{
 			sql:  "select max(a), max(b) from t",
 			best: "TableReader(Table(t)->StreamAgg)->StreamAgg",
 		},
+		// Do nothing if any column has a non-range condition.
 		{
 			sql:  "select max(a), max(c) from t where c > 10",
 			best: "IndexReader(Index(t.c_d_e)[(10,+inf]]->StreamAgg)->StreamAgg",
+		},
+		// Do nothing if the condition cannot be pushed down to range.
+		{
+			sql: "select max(a), min(a) from t where a * 3 + 10 < 100",
+			best: "IndexReader(Index(t.f)[[NULL,+inf]]->Sel([lt(plus(mul(test.t.a, 3), 10), 100)])->StreamAgg)->StreamAgg",
 		},
 		// Do nothing to max with groupby.
 		{

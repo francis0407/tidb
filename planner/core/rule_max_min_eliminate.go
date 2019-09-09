@@ -49,7 +49,7 @@ func (a *maxMinEliminator) composeAggsByInnerJoin(aggs []*LogicalAggregation) (p
 }
 
 // checkColCanUseIndex checks the following conditions:
-// 1. whether the col is the prefix of a index.
+// 1. whether the col is the prefix of an index.
 // 2. whether all of the selection conditions can be pushed down to the index range.
 func (a *maxMinEliminator) checkColCanUseIndex(plan LogicalPlan, col *expression.Column) bool {
 	switch p := plan.(type) {
