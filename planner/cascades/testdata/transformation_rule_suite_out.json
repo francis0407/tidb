@@ -1,0 +1,25 @@
+[
+  {
+    "Name": "TestEliminateSingleProjection",
+    "Cases": [
+      {
+        "SQL": "select * from t",
+        "Result": [
+          "Group#0 Schema:[Column#13,Column#14,Column#15,Column#16,Column#17,Column#18,Column#19,Column#20,Column#21,Column#22,Column#23,Column#24], UniqueKey:[Column#21,Column#21,Column#22,Column#13]",
+          "    TableGather_4 input:[Group#1]",
+          "Group#1 Schema:[Column#1,Column#2,Column#3,Column#4,Column#5,Column#6,Column#7,Column#8,Column#9,Column#10,Column#11,Column#12], UniqueKey:[Column#9,Column#9,Column#10,Column#1]",
+          "    TableScan_3 table:t, pk col:Column#1"
+        ]
+      },
+      {
+        "SQL": "select a, b from (select a, b from t)tt",
+        "Result": [
+          "Group#0 Schema:[Column#15,Column#16], UniqueKey:[Column#15]",
+          "    TableGather_5 input:[Group#1]",
+          "Group#1 Schema:[Column#1,Column#2], UniqueKey:[Column#1]",
+          "    TableScan_4 table:t, pk col:Column#1"
+        ]
+      }
+    ]
+  }
+]

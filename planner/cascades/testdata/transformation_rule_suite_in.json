@@ -1,0 +1,11 @@
+[
+  {
+    "name": "TestEliminateSingleProjection",
+    "cases": [
+      // Select all of the columns
+      "select * from t",
+      // Double Projection
+      "select a, b from (select a, b from t)tt"
+    ]
+  }
+]

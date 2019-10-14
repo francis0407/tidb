@@ -52,18 +52,26 @@ var defaultTransformationMap = map[memo.Operand][]Transformation{
 
 var patternMap = make(map[Transformation]*memo.Pattern)
 
+// GetPattern returns the Pattern of the specific Transformation rule.
+// If the pattern has been cached, return the cached Pattern. Otherwise
+// generate a new Pattern for the rule.
+func GetPattern(r Transformation) *memo.Pattern {
+	if p, ok := patternMap[r]; ok {
+		return p
+	}
+	p := r.GetPattern()
+	patternMap[r] = p
+	return p
+}
+
 // PushSelDownTableScan pushes the selection down to TableScan.
 type PushSelDownTableScan struct {
 }
 
 // GetPattern implements Transformation interface. The pattern of this rule is `Selection -> TableScan`.
 func (r *PushSelDownTableScan) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
 	ts := memo.NewPattern(memo.OperandTableScan)
 	p := memo.BuildPattern(memo.OperandSelection, ts)
-	patternMap[r] = p
 	return p
 }
 
@@ -117,13 +125,9 @@ type PushSelDownTableGather struct {
 // GetPattern implements Transformation interface. The pattern of this rule
 // is `Selection -> TableGather -> Any`
 func (r *PushSelDownTableGather) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
 	any := memo.NewPattern(memo.OperandAny)
 	tg := memo.BuildPattern(memo.OperandTableGather, any)
 	p := memo.BuildPattern(memo.OperandSelection, tg)
-	patternMap[r] = p
 	return p
 }
 
@@ -176,12 +180,7 @@ type EnumeratePaths struct {
 
 // GetPattern implements Transformation interface. The pattern of this rule is `DataSource`.
 func (r *EnumeratePaths) GetPattern() *memo.Pattern {
-	if p, ok := patternMap[r]; ok {
-		return p
-	}
-	p := memo.NewPattern(memo.OperandDataSource)
-	patternMap[r] = p
-	return p
+	return memo.NewPattern(memo.OperandDataSource)
 }
 
 // Match implements Transformation interface.
@@ -196,6 +195,47 @@ func (r *EnumeratePaths) OnTransform(old *memo.ExprIter) (newExprs []*memo.Group
 	for _, gather := range gathers {
 		expr := convert2GroupExpr(gather)
 		newExprs = append(newExprs, expr)
+	}
+	return newExprs, true, false, nil
+}
+
+// EliminateSingleProjection eliminates the projection which merely returns its
+// input columns.
+type EliminateSingleProjection struct {
+}
+
+// GetPattern implements Transformation interface.
+// The pattern of this rule is `Projection -> Any`.
+func (r *EliminateSingleProjection) GetPattern() *memo.Pattern {
+	return memo.BuildPattern(memo.OperandProjection, memo.NewPattern(memo.OperandAny))
+}
+
+// Match implements Transformation interface.
+func (r *EliminateSingleProjection) Match(expr *memo.ExprIter) bool {
+	groupExpr := expr.GetExpr()
+	proj := groupExpr.ExprNode.(*plannercore.LogicalProjection)
+	childSchema := groupExpr.Children[0].Prop.Schema
+	if proj.Schema().Len() == 0 {
+		return true
+	}
+	if proj.Schema().Len() != childSchema.Len() {
+		return false
+	}
+	for i, expr := range proj.Exprs {
+		col, ok := expr.(*expression.Column)
+		if !ok || !col.Equal(nil, childSchema.Columns[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// OnTransform implements OnTransform interface.
+func (r *EliminateSingleProjection) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
+	childGroup := old.GetExpr().Children[0]
+	newExprs = make([]*memo.GroupExpr, 0, childGroup.Equivalents.Len())
+	for elem := childGroup.Equivalents.Front(); elem != nil; elem = elem.Next() {
+		newExprs = append(newExprs, elem.Value.(*memo.GroupExpr))
 	}
 	return newExprs, true, false, nil
 }
