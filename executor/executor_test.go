@@ -1963,7 +1963,7 @@ func (s *testSuite) TestPointGetRepeatableRead(c *C) {
 }
 
 func (s *testSuite) TestSplitRegionTimeout(c *C) {
-	c.Assert(failpoint.Enable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout", `return(true)`), IsNil)
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout", `return(true)`), IsNil)
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -1972,7 +1972,12 @@ func (s *testSuite) TestSplitRegionTimeout(c *C) {
 	tk.MustExec(`set @@tidb_wait_split_region_timeout=1`)
 	// result 0 0 means split 0 region and 0 region finish scatter regions before timeout.
 	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("0 0"))
-	c.Assert(failpoint.Disable("github.com/pingcap/tidb/executor/mockSplitRegionTimeout"), IsNil)
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockSplitRegionTimeout"), IsNil)
+
+	// Test scatter regions timeout.
+	c.Assert(failpoint.Enable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout", `return(true)`), IsNil)
+	tk.MustQuery(`split table t between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
+	c.Assert(failpoint.Disable("github.com/pingcap/tidb/store/tikv/MockScatterRegionTimeout"), IsNil)
 }
 
 func (s *testSuite) TestRow(c *C) {
@@ -3604,11 +3609,11 @@ func (s *testSuite) TestSelectView(c *C) {
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(c int,d int)")
 	err := tk.ExecToErr("select * from view1")
-	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view1").Error())
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view2")
-	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view2").Error())
+	c.Assert(err.Error(), Equals, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them")
 	err = tk.ExecToErr("select * from view3")
-	c.Assert(err.Error(), Equals, "[planner:1054]Unknown column 'a' in 'field list'")
+	c.Assert(err.Error(), Equals, plannercore.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error())
 	tk.MustExec("drop table view_t;")
 	tk.MustExec("create table view_t(a int,b int,c int)")
 	tk.MustExec("insert into view_t values(1,2,3)")
@@ -3791,6 +3796,9 @@ func (s *testSuite4) TearDownTest(c *C) {
 
 func (s *testSuite) TestStrToDateBuiltin(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%!') from dual`).Check(testkit.Rows("2019-01-01"))
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%f') from dual`).Check(testkit.Rows("2019-01-01 00:00:00.000000"))
+	tk.MustQuery(`select str_to_date('20190101','%Y%m%d%H%i%s') from dual`).Check(testkit.Rows("2019-01-01 00:00:00"))
 	tk.MustQuery(`select str_to_date('18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2018-10-22"))
 	tk.MustQuery(`select str_to_date('a18/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("<nil>"))
 	tk.MustQuery(`select str_to_date('69/10/22','%y/%m/%d') from dual`).Check(testkit.Rows("2069-10-22"))
@@ -3849,7 +3857,7 @@ func (s *testSuite) TestReadPartitionedTable(c *C) {
 func (s *testSuite) TestSplitRegion(c *C) {
 	tk := testkit.NewTestKit(c, s.store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
+	tk.MustExec("drop table if exists t, t1")
 	tk.MustExec("create table t(a varchar(100),b int, index idx1(b,a))")
 	tk.MustExec(`split table t index idx1 by (10000,"abcd"),(10000000);`)
 	_, err := tk.Exec(`split table t index idx1 by ("abcd");`)
@@ -3891,7 +3899,7 @@ func (s *testSuite) TestSplitRegion(c *C) {
 
 	// Test for split table region.
 	tk.MustExec(`split table t between (0) and (1000000000) regions 10`)
-	// Check the ower value is more than the upper value.
+	// Check the lower value is more than the upper value.
 	_, err = tk.Exec(`split table t between (2) and (1) regions 10`)
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region lower value 2 should less than the upper value 1")
@@ -3926,8 +3934,13 @@ func (s *testSuite) TestSplitRegion(c *C) {
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Equals, "Split table `t` region step value should more than 1000, step 10 is invalid")
 
-	// Test split region by syntax
+	// Test split region by syntax.
 	tk.MustExec(`split table t by (0),(1000),(1000000)`)
+
+	// Test split region twice to test for multiple batch split region requests.
+	tk.MustExec("create table t1(a int, b int)")
+	tk.MustQuery("split table t1 between(0) and (10000) regions 10;").Check(testkit.Rows("9 1"))
+	tk.MustQuery("split table t1 between(10) and (10010) regions 5;").Check(testkit.Rows("4 1"))
 }
 
 func (s *testSuite) TestShowTableRegion(c *C) {
@@ -4182,6 +4195,16 @@ func (s *testSuite) TestOOMPanicAction(c *C) {
 	}()
 	tk.MustExec("set @@tidb_mem_quota_query=1;")
 	err := tk.QueryToErr("select sum(b) from t group by a;")
+	c.Assert(err, NotNil)
+	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
+
+	// Test insert from select oom panic.
+	tk.MustExec("drop table if exists t,t1")
+	tk.MustExec("create table t (a bigint);")
+	tk.MustExec("create table t1 (a bigint);")
+	tk.MustExec("insert into t1 values (1),(2),(3),(4),(5);")
+	tk.MustExec("set @@tidb_mem_quota_query=200;")
+	_, err = tk.Exec("insert into t select a from t1 order by a desc;")
 	c.Assert(err, NotNil)
 	c.Assert(err.Error(), Matches, "Out Of Memory Quota!.*")
 }

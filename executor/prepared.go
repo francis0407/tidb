@@ -17,6 +17,7 @@ import (
 	"context"
 	"math"
 	"sort"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
@@ -167,6 +168,7 @@ func (e *PrepareExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	}
 	prepared := &ast.Prepared{
 		Stmt:          stmt,
+		StmtType:      GetStmtLabel(stmt),
 		Params:        sorter.markers,
 		SchemaVersion: e.is.SchemaMetaVersion(),
 	}
@@ -266,6 +268,10 @@ func (e *DeallocateExec) Next(ctx context.Context, req *chunk.Chunk) error {
 
 // CompileExecutePreparedStmt compiles a session Execute command to a stmt.Statement.
 func CompileExecutePreparedStmt(ctx context.Context, sctx sessionctx.Context, ID uint32, args ...interface{}) (sqlexec.Statement, error) {
+	startTime := time.Now()
+	defer func() {
+		sctx.GetSessionVars().DurationCompile = time.Since(startTime)
+	}()
 	execStmt := &ast.ExecuteStmt{ExecID: ID}
 	if err := ResetContextOfStmt(sctx, execStmt); err != nil {
 		return nil, err

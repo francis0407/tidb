@@ -88,8 +88,9 @@ type Config struct {
 	CheckMb4ValueInUTF8 bool              `toml:"check-mb4-value-in-utf8" json:"check-mb4-value-in-utf8"`
 	// TreatOldVersionUTF8AsUTF8MB4 is use to treat old version table/column UTF8 charset as UTF8MB4. This is for compatibility.
 	// Currently not support dynamic modify, because this need to reload all old version schema.
-	TreatOldVersionUTF8AsUTF8MB4 bool   `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
-	SplitRegionMaxNum            uint64 `toml:"split-region-max-num" json:"split-region-max-num"`
+	TreatOldVersionUTF8AsUTF8MB4 bool        `toml:"treat-old-version-utf8-as-utf8mb4" json:"treat-old-version-utf8-as-utf8mb4"`
+	SplitRegionMaxNum            uint64      `toml:"split-region-max-num" json:"split-region-max-num"`
+	StmtSummary                  StmtSummary `toml:"stmt-summary" json:"stmt-summary"`
 }
 
 // Log is the log section of config.
@@ -103,10 +104,11 @@ type Log struct {
 	// File log config.
 	File logutil.FileLogConfig `toml:"file" json:"file"`
 
-	SlowQueryFile      string `toml:"slow-query-file" json:"slow-query-file"`
-	SlowThreshold      uint64 `toml:"slow-threshold" json:"slow-threshold"`
-	ExpensiveThreshold uint   `toml:"expensive-threshold" json:"expensive-threshold"`
-	QueryLogMaxLen     uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	SlowQueryFile       string `toml:"slow-query-file" json:"slow-query-file"`
+	SlowThreshold       uint64 `toml:"slow-threshold" json:"slow-threshold"`
+	ExpensiveThreshold  uint   `toml:"expensive-threshold" json:"expensive-threshold"`
+	QueryLogMaxLen      uint64 `toml:"query-log-max-len" json:"query-log-max-len"`
+	RecordPlanInSlowLog uint32 `toml:"record-plan-in-slow-log" json:"record-plan-in-slow-log"`
 }
 
 // Security is the security section of the config.
@@ -275,6 +277,9 @@ type TiKVClient struct {
 	MaxBatchWaitTime time.Duration `toml:"max-batch-wait-time" json:"max-batch-wait-time"`
 	// BatchWaitSize is the max wait size for batch.
 	BatchWaitSize uint `toml:"batch-wait-size" json:"batch-wait-size"`
+	// If a Region has not been accessed for more than the given duration (in seconds), it
+	// will be reloaded from the PD.
+	RegionCacheTTL uint `toml:"region-cache-ttl" json:"region-cache-ttl"`
 }
 
 // Binlog is the config for binlog.
@@ -306,6 +311,14 @@ type PessimisticTxn struct {
 	TTL string `toml:"ttl" json:"ttl"`
 }
 
+// StmtSummary is the config for statement summary.
+type StmtSummary struct {
+	// The maximum number of statements kept in memory.
+	MaxStmtCount uint `toml:"max-stmt-count" json:"max-stmt-count"`
+	// The maximum length of displayed normalized SQL and sample SQL.
+	MaxSQLLength uint `toml:"max-sql-length" json:"max-sql-length"`
+}
+
 var defaultConf = Config{
 	Host:                         "0.0.0.0",
 	AdvertiseAddress:             "",
@@ -329,13 +342,14 @@ var defaultConf = Config{
 	},
 	LowerCaseTableNames: 2,
 	Log: Log{
-		Level:              "info",
-		Format:             "text",
-		File:               logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
-		SlowQueryFile:      "tidb-slow.log",
-		SlowThreshold:      logutil.DefaultSlowThreshold,
-		ExpensiveThreshold: 10000,
-		QueryLogMaxLen:     logutil.DefaultQueryLogMaxLen,
+		Level:               "info",
+		Format:              "text",
+		File:                logutil.NewFileLogConfig(true, logutil.DefaultLogMaxSize),
+		SlowQueryFile:       "tidb-slow.log",
+		SlowThreshold:       logutil.DefaultSlowThreshold,
+		ExpensiveThreshold:  10000,
+		QueryLogMaxLen:      logutil.DefaultQueryLogMaxLen,
+		RecordPlanInSlowLog: logutil.DefaultRecordPlanInSlowLog,
 	},
 	Status: Status{
 		ReportStatus:    true,
@@ -386,6 +400,8 @@ var defaultConf = Config{
 		OverloadThreshold: 200,
 		MaxBatchWaitTime:  0,
 		BatchWaitSize:     8,
+
+		RegionCacheTTL: 600,
 	},
 	Binlog: Binlog{
 		WriteTimeout: "15s",
@@ -395,6 +411,10 @@ var defaultConf = Config{
 		Enable:        true,
 		MaxRetryCount: 256,
 		TTL:           "40s",
+	},
+	StmtSummary: StmtSummary{
+		MaxStmtCount: 100,
+		MaxSQLLength: 4096,
 	},
 }
 
