@@ -173,15 +173,19 @@ func main() {
 	signal.SetupSignalHandler(serverShutdown)
 	runServer()
 	cleanup()
-	exit()
+	syncLog()
 }
 
 func exit() {
+	syncLog()
+	os.Exit(0)
+}
+
+func syncLog() {
 	if err := log.Sync(); err != nil {
 		fmt.Fprintln(os.Stderr, "sync log err:", err)
 		os.Exit(1)
 	}
-	os.Exit(0)
 }
 
 func registerStores() {
@@ -329,7 +333,7 @@ func loadConfig() string {
 // hotReloadConfigItems lists all config items which support hot-reload.
 var hotReloadConfigItems = []string{"Performance.MaxProcs", "Performance.MaxMemory", "Performance.CrossJoin",
 	"Performance.FeedbackProbability", "Performance.QueryFeedbackLimit", "Performance.PseudoEstimateRatio",
-	"OOMAction", "MemQuotaQuery"}
+	"OOMAction", "MemQuotaQuery", "StmtSummary.MaxStmtCount", "StmtSummary.MaxSQLLength"}
 
 func reloadConfig(nc, c *config.Config) {
 	// Just a part of config items need to be reload explicitly.
@@ -498,6 +502,7 @@ func setGlobalVars() {
 
 	tikv.CommitMaxBackoff = int(parseDuration(cfg.TiKVClient.CommitTimeout).Seconds() * 1000)
 	tikv.PessimisticLockTTL = uint64(parseDuration(cfg.PessimisticTxn.TTL).Seconds() * 1000)
+	tikv.RegionCacheTTLSec = int64(cfg.TiKVClient.RegionCacheTTL)
 }
 
 func setupLog() {

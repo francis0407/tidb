@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/parser/ast"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/types"
@@ -73,6 +74,16 @@ func GetDDLErrorCountLimit() int64 {
 	return atomic.LoadInt64(&ddlErrorCountlimit)
 }
 
+// SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
+}
+
+// GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDeltaSchemaCount)
+}
+
 // GetSessionSystemVar gets a system variable.
 // If it is a session only variable, use the default value defined in code.
 // Returns error if there is no such variable.
@@ -116,6 +127,8 @@ func GetSessionOnlySysVars(s *SessionVars, key string) (string, bool, error) {
 		return mysql.Priority2Str[mysql.PriorityEnum(atomic.LoadInt32(&ForcePriority))], true, nil
 	case TiDBSlowLogThreshold:
 		return strconv.FormatUint(atomic.LoadUint64(&config.GetGlobalConfig().Log.SlowThreshold), 10), true, nil
+	case TiDBRecordPlanInSlowLog:
+		return strconv.FormatUint(uint64(atomic.LoadUint32(&config.GetGlobalConfig().Log.RecordPlanInSlowLog)), 10), true, nil
 	case TiDBDDLSlowOprThreshold:
 		return strconv.FormatUint(uint64(atomic.LoadUint32(&DDLSlowOprThreshold)), 10), true, nil
 	case TiDBQueryLogMaxLen:
@@ -320,6 +333,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return checkUInt64SystemVar(name, value, 0, 4294967295, vars)
 	case OldPasswords:
 		return checkUInt64SystemVar(name, value, 0, 2, vars)
+	case TiDBMaxDeltaSchemaCount:
+		return checkInt64SystemVar(name, value, 100, 16384, vars)
 	case SessionTrackGtids:
 		if strings.EqualFold(value, "OFF") || value == "0" {
 			return "OFF", nil
@@ -381,7 +396,7 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		SQLWarnings, UniqueChecks, OldAlterTable, LogBinTrustFunctionCreators, SQLBigSelects,
 		BinlogDirectNonTransactionalUpdates, SQLQuoteShowCreate, AutomaticSpPrivileges,
 		RelayLogPurge, SQLAutoIsNull, QueryCacheWlockInvalidate, ValidatePasswordCheckUserName,
-		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements,
+		SuperReadOnly, BinlogOrderCommits, MasterVerifyChecksum, BinlogRowQueryLogEvents, LogSlowSlaveStatements, TiDBRecordPlanInSlowLog,
 		LogSlowAdminStatements, LogQueriesNotUsingIndexes, Profiling:
 		if strings.EqualFold(value, "ON") {
 			return "1", nil
@@ -426,6 +441,8 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	case MaxExecutionTime:
 		return checkUInt64SystemVar(name, value, 0, math.MaxUint64, vars)
+	case ThreadPoolSize:
+		return checkUInt64SystemVar(name, value, 1, 64, vars)
 	case TiDBEnableTablePartition:
 		switch {
 		case strings.EqualFold(value, "ON") || value == "1":
@@ -562,6 +579,30 @@ func ValidateSetSystemVar(vars *SessionVars, name string, value string) (string,
 		if v <= 0 {
 			return value, errors.Errorf("tidb_wait_split_region_timeout(%d) cannot be smaller than 1", v)
 		}
+	case TiDBTxnMode:
+		switch strings.ToUpper(value) {
+		case ast.Pessimistic, ast.Optimistic, "":
+		default:
+			return value, ErrWrongValueForVar.GenWithStackByArgs(TiDBTxnMode, value)
+		}
+	case TiDBAllowRemoveAutoInc:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "on", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "off", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
+	case TiDBEnableStmtSummary:
+		switch {
+		case strings.EqualFold(value, "ON") || value == "1":
+			return "1", nil
+		case strings.EqualFold(value, "OFF") || value == "0":
+			return "0", nil
+		case value == "":
+			return "", nil
+		}
+		return value, ErrWrongValueForVar.GenWithStackByArgs(name, value)
 	}
 	return value, nil
 }

@@ -136,7 +136,7 @@ type Transaction interface {
 	// String implements fmt.Stringer interface.
 	String() string
 	// LockKeys tries to lock the entries with the keys in KV store.
-	LockKeys(ctx context.Context, forUpdateTS uint64, keys ...Key) error
+	LockKeys(ctx context.Context, killed *uint32, forUpdateTS uint64, keys ...Key) error
 	// SetOption sets an option with a value, when val is nil, uses the default
 	// value of this option.
 	SetOption(opt Option, val interface{})
@@ -156,6 +156,8 @@ type Transaction interface {
 	// SetAssertion sets an assertion for an operation on the key.
 	SetAssertion(key Key, assertion AssertionType)
 	// BatchGet gets kv from the memory buffer of statement and transaction, and the kv storage.
+	// Do not use len(value) == 0 or value == nil to represent non-exist.
+	// If a key doesn't exist, there shouldn't be any corresponding entry in the result map.
 	BatchGet(keys []Key) (map[string][]byte, error)
 	IsPessimistic() bool
 }
@@ -298,7 +300,7 @@ type Iterator interface {
 
 // SplitableStore is the kv store which supports split regions.
 type SplitableStore interface {
-	SplitRegion(splitKey Key, scatter bool) (regionID uint64, err error)
+	SplitRegions(ctx context.Context, splitKey [][]byte, scatter bool) (regionID []uint64, err error)
 	WaitScatterRegionFinish(regionID uint64, backOff int) error
 	CheckRegionInScattering(regionID uint64) (bool, error)
 }

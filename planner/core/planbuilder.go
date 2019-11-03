@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/parser/model"
 	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/parser/opcode"
+	"github.com/pingcap/tidb/config"
 	"github.com/pingcap/tidb/ddl"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/infoschema"
@@ -144,7 +145,6 @@ const (
 	onClause
 	orderByClause
 	whereClause
-	windowClause
 	groupByClause
 	showStatement
 	globalOrderByClause
@@ -160,8 +160,16 @@ var clauseMsg = map[clauseCode]string{
 	groupByClause:       "group statement",
 	showStatement:       "show statement",
 	globalOrderByClause: "global ORDER clause",
-	windowClause:        "field list", // For window functions that in field list.
 }
+
+type capFlagType = uint64
+
+const (
+	_ capFlagType = iota
+	// canExpandAST indicates whether the origin AST can be expanded during plan
+	// building. ONLY used for `CreateViewStmt` now.
+	canExpandAST
+)
 
 // PlanBuilder builds Plan from an ast.Node.
 // It just builds the ast node straightforwardly.
@@ -175,7 +183,10 @@ type PlanBuilder struct {
 	// visitInfo is used for privilege check.
 	visitInfo     []visitInfo
 	tableHintInfo []tableHintInfo
-	optFlag       uint64
+	// optFlag indicates the flags of the optimizer rules.
+	optFlag uint64
+	// capFlag indicates the capability flags.
+	capFlag capFlagType
 
 	curClause clauseCode
 
@@ -477,6 +488,17 @@ func getPossibleAccessPaths(indexHints []*ast.IndexHint, tblInfo *model.TableInf
 		}
 
 		hasScanHint = true
+
+		// It is syntactically valid to omit index_list for USE INDEX, which means “use no indexes”.
+		// Omitting index_list for FORCE INDEX or IGNORE INDEX is a syntax error.
+		// See https://dev.mysql.com/doc/refman/8.0/en/index-hints.html.
+		if hint.IndexNames == nil && hint.HintType != ast.HintIgnore {
+			if path := getTablePath(publicPaths); path != nil {
+				hasUseOrForce = true
+				path.forced = true
+				available = append(available, path)
+			}
+		}
 		for _, idxName := range hint.IndexNames {
 			path := getPathByIndexName(publicPaths, idxName, tblInfo)
 			if path == nil {
@@ -1774,8 +1796,6 @@ func (b *PlanBuilder) buildLoadStats(ld *ast.LoadStatsStmt) Plan {
 	return p
 }
 
-const maxSplitRegionNum = 1000
-
 func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (Plan, error) {
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
@@ -1836,6 +1856,7 @@ func (b *PlanBuilder) buildSplitIndexRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = lowerValues
 	p.Upper = upperValues
 
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split index region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
@@ -1946,6 +1967,7 @@ func (b *PlanBuilder) buildSplitTableRegion(node *ast.SplitRegionStmt) (Plan, er
 	p.Lower = []types.Datum{lowerValues}
 	p.Upper = []types.Datum{upperValue}
 
+	maxSplitRegionNum := int64(config.GetGlobalConfig().SplitRegionMaxNum)
 	if node.SplitOpt.Num > maxSplitRegionNum {
 		return nil, errors.Errorf("Split table region num exceeded the limit %v", maxSplitRegionNum)
 	} else if node.SplitOpt.Num < 1 {
@@ -2038,17 +2060,23 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (Plan, err
 				v.ReferTable.Name.L, "", authErr)
 		}
 	case *ast.CreateViewStmt:
+		b.capFlag |= canExpandAST
+		defer func() {
+			b.capFlag &= ^canExpandAST
+		}()
 		plan, err := b.Build(ctx, v.Select)
 		if err != nil {
 			return nil, err
 		}
 		schema := plan.Schema()
-		if v.Cols != nil && len(v.Cols) != schema.Len() {
-			return nil, ddl.ErrViewWrongList
+		if v.Cols == nil {
+			v.Cols = make([]model.CIStr, len(schema.Columns))
+			for i, col := range schema.Columns {
+				v.Cols[i] = col.ColName
+			}
 		}
-		v.SchemaCols = make([]model.CIStr, schema.Len())
-		for i, col := range schema.Columns {
-			v.SchemaCols[i] = col.ColName
+		if len(v.Cols) != schema.Len() {
+			return nil, ddl.ErrViewWrongList
 		}
 		if _, ok := plan.(LogicalPlan); ok {
 			if b.ctx.GetSessionVars().User != nil {
