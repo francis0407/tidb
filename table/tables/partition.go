@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/parser/model"
+	"github.com/pingcap/parser/mysql"
 	"github.com/pingcap/tidb/expression"
 	"github.com/pingcap/tidb/kv"
 	"github.com/pingcap/tidb/sessionctx"
@@ -78,7 +79,7 @@ func newPartitionedTable(tbl *TableCommon, tblInfo *model.TableInfo) (table.Tabl
 	pi := tblInfo.GetPartitionInfo()
 	for _, p := range pi.Definitions {
 		var t partition
-		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.allocs)
+		err := initTableCommonWithIndices(&t.TableCommon, tblInfo, p.ID, tbl.Columns, tbl.alloc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -99,7 +100,7 @@ func newPartitionExprBySchema(ctx sessionctx.Context, tblInfo *model.TableInfo, 
 	pi := tblInfo.GetPartitionInfo()
 	switch pi.Type {
 	case model.PartitionTypeRange:
-		return generatePartitionExpr(ctx, pi, columns, names)
+		return generatePartitionExpr(ctx, pi, columns, names, tblInfo)
 	case model.PartitionTypeHash:
 		return generateHashPartitionExpr(ctx, pi, columns, names)
 	}
@@ -143,7 +144,7 @@ func rangePartitionString(pi *model.PartitionInfo) string {
 }
 
 func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
-	columns []*expression.Column, names types.NameSlice) (*PartitionExpr, error) {
+	columns []*expression.Column, names types.NameSlice, tblInfo *model.TableInfo) (*PartitionExpr, error) {
 	var column *expression.Column
 	// The caller should assure partition info is not nil.
 	partitionPruneExprs := make([]expression.Expression, 0, len(pi.Definitions))
@@ -167,13 +168,10 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			return nil, errors.Trace(err)
 		}
 		locateExprs = append(locateExprs, exprs[0])
-
 		if i > 0 {
 			fmt.Fprintf(&buf, " and ((%s) >= (%s))", partStr, pi.Definitions[i-1].LessThan[0])
 		} else {
-			// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
-			fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
-
+			needCheckNull := true
 			// Extracts the column of the partition expression, it will be used by partition prunning.
 			if tmps, err1 := expression.ParseSimpleExprsWithNames(ctx, partStr, schema, names); err1 == nil {
 				if col, ok := tmps[0].(*expression.Column); ok {
@@ -182,6 +180,17 @@ func generatePartitionExpr(ctx sessionctx.Context, pi *model.PartitionInfo,
 			}
 			if column == nil {
 				logutil.BgLogger().Warn("partition pruning not applicable", zap.String("expression", partStr))
+			} else {
+				columnInfo := column.GetColumnInfo(tblInfo.Columns)
+				if mysql.HasNotNullFlag(columnInfo.Flag) {
+					// If the partition column has `NOT NULL` flag, then we don't need
+					// a `is null` condition in the first partition.
+					needCheckNull = false
+				}
+			}
+			if needCheckNull {
+				// NULL will locate in the first partition, so its expression is (expr < value or expr is null).
+				fmt.Fprintf(&buf, " or ((%s) is null)", partStr)
 			}
 		}
 

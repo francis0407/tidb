@@ -200,6 +200,16 @@ type Column struct {
 	IsHidden bool
 }
 
+// GetColumnInfo returns the ColumnInfo with the same `ID` from a slice of ColumnInfo.
+func (col *Column) GetColumnInfo(cols []*model.ColumnInfo) *model.ColumnInfo {
+	for _, info := range cols {
+		if col.ID == info.ID {
+			return info
+		}
+	}
+	return nil
+}
+
 // Equal implements Expression interface.
 func (col *Column) Equal(_ sessionctx.Context, expr Expression) bool {
 	if newCol, ok := expr.(*Column); ok {
