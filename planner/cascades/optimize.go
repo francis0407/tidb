@@ -16,6 +16,8 @@ package cascades
 import (
 	"container/list"
 	"math"
+	"reflect"
+	"strings"
 
 	"github.com/pingcap/tidb/expression"
 	plannercore "github.com/pingcap/tidb/planner/core"
@@ -130,7 +132,7 @@ func (opt *Optimizer) onPhasePreprocessing(sctx sessionctx.Context, plan planner
 
 func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group) error {
 	for !g.Explored {
-		err := opt.exploreGroup(g)
+		err := opt.exploreGroup(sctx, g)
 		if err != nil {
 			return err
 		}
@@ -138,7 +140,7 @@ func (opt *Optimizer) onPhaseExploration(sctx sessionctx.Context, g *memo.Group)
 	return nil
 }
 
-func (opt *Optimizer) exploreGroup(g *memo.Group) error {
+func (opt *Optimizer) exploreGroup(sctx sessionctx.Context, g *memo.Group) error {
 	if g.Explored {
 		return nil
 	}
@@ -154,13 +156,13 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 		// Explore child groups firstly.
 		for _, childGroup := range curExpr.Children {
 			for !childGroup.Explored {
-				if err := opt.exploreGroup(childGroup); err != nil {
+				if err := opt.exploreGroup(sctx, childGroup); err != nil {
 					return err
 				}
 			}
 		}
 
-		eraseCur, err := opt.findMoreEquiv(g, elem)
+		eraseCur, err := opt.findMoreEquiv(sctx, g, elem)
 		if err != nil {
 			return err
 		}
@@ -172,7 +174,8 @@ func (opt *Optimizer) exploreGroup(g *memo.Group) error {
 }
 
 // findMoreEquiv finds and applies the matched transformation rules.
-func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+func (opt *Optimizer) findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem *list.Element) (eraseCur bool, err error) {
+	tracer := sctx.GetSessionVars().StmtCtx.CascadesTracer
 	expr := elem.Value.(*memo.GroupExpr)
 	for _, rule := range opt.GetTransformationRules(expr.ExprNode) {
 		pattern := rule.GetPattern()
@@ -201,7 +204,6 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 				g.Explored = true
 				return false, nil
 			}
-
 			eraseCur = eraseCur || eraseOld
 			for _, e := range newExprs {
 				if !g.Insert(e) {
@@ -211,6 +213,12 @@ func (opt *Optimizer) findMoreEquiv(g *memo.Group, elem *list.Element) (eraseCur
 				// current Group, mark the Group as unexplored to enable the exploration
 				// on the new Group expressions.
 				g.Explored = false
+			}
+
+			if tracer != nil && len(newExprs) > 0 {
+				ruleName := strings.Split(reflect.TypeOf(rule).String(), ".")
+				memoSnapshot := memo.SerializeMemo(g, ruleName[len(ruleName)-1], iter.Flatten(), newExprs, eraseOld, eraseAll)
+				tracer.AppendSnapshot(memoSnapshot)
 			}
 		}
 	}

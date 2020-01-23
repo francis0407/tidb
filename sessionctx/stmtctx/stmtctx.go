@@ -142,6 +142,8 @@ type StatementContext struct {
 	lockWaitStartTime     *time.Time // LockWaitStartTime stores the pessimistic lock wait start time
 	PessimisticLockWaited int32
 	LockKeysDuration      time.Duration
+	// CascadesTracer is used to trace the optimization process of cascades planner.
+	CascadesTracer *CascadesTracer
 }
 
 // StmtHints are SessionVars related sql hints.
@@ -640,4 +642,13 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 	fields = append(fields, zap.String("wait_max_time", strconv.FormatFloat(d.MaxWaitTime.Seconds(), 'f', -1, 64)+"s"))
 	fields = append(fields, zap.String("wait_max_addr", d.MaxWaitAddress))
 	return fields
+}
+
+// CascadesTracer is used to trace the optimization process of cascades planner.
+type CascadesTracer struct {
+	MemoSnapshots []interface{}
+}
+
+func (t *CascadesTracer) AppendSnapshot(snapshot interface{}) {
+	t.MemoSnapshots = append(t.MemoSnapshots, snapshot)
 }
