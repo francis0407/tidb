@@ -61,7 +61,7 @@ type GroupExprInfo struct {
 	// ChildrenIDs are the IDs of the children Groups.
 	ChildrenIDs []int `json:"children"`
 	// Children are the children Groups of this GroupExpr.
-	Children []GroupInfo `json:"-"`
+	Children []*GroupInfo `json:"-"`
 }
 
 // SerializeMemo serializes a memo.
