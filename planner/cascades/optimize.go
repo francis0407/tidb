@@ -110,6 +110,9 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 		return nil, 0, err
 	}
 	rootGroup := memo.Convert2Group(logical)
+	if tracer := sctx.GetSessionVars().StmtCtx.CascadesTracer; tracer != nil {
+		tracer.RootGroup = rootGroup
+	}
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
 		return nil, 0, err
@@ -217,7 +220,8 @@ func (opt *Optimizer) findMoreEquiv(sctx sessionctx.Context, g *memo.Group, elem
 
 			if tracer != nil && len(newExprs) > 0 {
 				ruleName := strings.Split(reflect.TypeOf(rule).String(), ".")
-				memoSnapshot := memo.SerializeMemo(g, ruleName[len(ruleName)-1], iter.Flatten(), newExprs, eraseOld, eraseAll)
+				rootGroup := tracer.RootGroup.(*memo.Group)
+				memoSnapshot := memo.SerializeMemo(rootGroup, ruleName[len(ruleName)-1], iter.Flatten(), newExprs, eraseOld, eraseAll)
 				tracer.AppendSnapshot(memoSnapshot)
 			}
 		}

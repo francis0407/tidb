@@ -646,6 +646,7 @@ func (d *CopTasksDetails) ToZapFields() (fields []zap.Field) {
 
 // CascadesTracer is used to trace the optimization process of cascades planner.
 type CascadesTracer struct {
+	RootGroup     interface{}
 	MemoSnapshots []interface{}
 }
 
