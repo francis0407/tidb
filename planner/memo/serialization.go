@@ -118,7 +118,7 @@ func serializeGroupExpr(expr *GroupExpr, matchedExpr []*GroupExpr, newCreatedExp
 	plan := expr.ExprNode
 	exprInfo := &GroupExprInfo{
 		Operand:  plan.TP(),
-		ExprInfo: plan.ExplainID().String(),
+		ExprInfo: plan.ExplainInfo(),
 	}
 	// Check if this GroupExpr is matched by the rule.
 	for _, matched := range matchedExpr {
