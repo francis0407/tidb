@@ -112,6 +112,8 @@ func (opt *Optimizer) FindBestPlan(sctx sessionctx.Context, logical plannercore.
 	rootGroup := memo.Convert2Group(logical)
 	if tracer := sctx.GetSessionVars().StmtCtx.CascadesTracer; tracer != nil {
 		tracer.RootGroup = rootGroup
+		memoSnapshot := memo.SerializeMemo(rootGroup, "InitMemo", nil, nil, false, false)
+		tracer.AppendSnapshot(memoSnapshot)
 	}
 	err = opt.onPhaseExploration(sctx, rootGroup)
 	if err != nil {
